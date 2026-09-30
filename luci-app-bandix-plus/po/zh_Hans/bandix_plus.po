@@ -365,6 +365,15 @@ msgstr "监控接口"
 msgid "Select one or more interfaces to monitor."
 msgstr "选择一个或多个要监控的网络接口。"
 
+msgid "Default interface"
+msgstr "默认接口"
+
+msgid "Interface selected by default on the Status page. Leave it as Auto to use the first monitored interface."
+msgstr "状态页默认选中的接口；保持“自动”则使用监控列表中的第一个接口。"
+
+msgid "Auto (first monitored interface)"
+msgstr "自动（第一个监控接口）"
+
 msgid "Log level"
 msgstr "日志级别"
 

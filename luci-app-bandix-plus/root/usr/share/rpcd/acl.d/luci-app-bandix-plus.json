@@ -19,9 +19,17 @@
 					"getVersion",
 					"checkUpdate",
 					"getStatus"
-				]
+				],
+				"luci-rpc": [
+					"getBoardJSON",
+					"getHostHints",
+					"getNetworkDevices",
+					"getWirelessDevices"
+				],
+				"network": [ "get_proto_handlers" ],
+				"network.interface": [ "dump" ]
 			},
-			"uci": [ "bandix_plus" ]
+			"uci": [ "bandix_plus", "firewall", "network", "wireless", "luci" ]
 		},
 		"write": {
 			"ubus": {

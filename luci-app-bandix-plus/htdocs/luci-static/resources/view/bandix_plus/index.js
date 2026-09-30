@@ -5,6 +5,8 @@
 'require uci';
 'require rpc';
 'require poll';
+'require network';
+'require firewall';
 
 var callGetOverview = rpc.declare({
 	object: 'luci.bandix_plus',
@@ -623,7 +625,8 @@ return view.extend({
 			optionalLoad('luci'),
 			optionalLoad('argon'),
 			optionalLoad('kucat'),
-			callGetVersion().then(bplusJson).catch(function () { return {}; })
+			callGetVersion().then(bplusJson).catch(function () { return {}; }),
+			this.buildZoneFallback().catch(function () { return {}; })
 		]);
 	},
 
@@ -634,6 +637,12 @@ return view.extend({
 
 	initState: function (load) {
 		this.version = load && load[4] ? load[4] : {};
+		this.defaultIface = uci.get('bandix_plus', 'general', 'default_iface') || '';
+		if (Array.isArray(this.defaultIface))
+			this.defaultIface = this.defaultIface[0] || '';
+		if (this.defaultIface === 'auto')
+			this.defaultIface = '';
+		this.zoneFallback = load && load[5] ? load[5] : {};
 		this.period = localStorage.getItem('bplus_period') || 'all';
 		this.rateUnitMode = localStorage.getItem('bplus_rate_unit') === 'bit' ? 'bit' : 'byte';
 		setRateUnitMode(this.rateUnitMode);
@@ -685,6 +694,54 @@ return view.extend({
 		this.liveReqSeq = 0;
 		this.trendReqSeq = 0;
 		this.statsReqSeq = 0;
+	},
+
+	buildZoneFallback: function () {
+		var map = {};
+		if (!firewall || typeof firewall.getZones !== 'function' ||
+		    !network || typeof network.getDevices !== 'function')
+			return Promise.resolve(map);
+		return L.resolveDefault(firewall.getZones(), []).then(function (zones) {
+			var zoneByNetwork = {};
+			var zoneByDevice = {};
+			(zones || []).forEach(function (z) {
+				var zoneName = z.getName();
+				if (!zoneName) return;
+				(z.getNetworks() || []).forEach(function (net) {
+					if (net && !(net in zoneByNetwork)) zoneByNetwork[net] = zoneName;
+				});
+				(z.getDevices() || []).forEach(function (dev) {
+					if (dev && !(dev in zoneByDevice)) zoneByDevice[dev] = zoneName;
+				});
+			});
+			return L.resolveDefault(network.getDevices(), []).then(function (devices) {
+				(devices || []).forEach(function (dev) {
+					var name = dev.getName();
+					if (!name) return;
+					var zoneName = zoneByDevice[name];
+					if (!zoneName) {
+						var nets = dev.getNetworks() || [];
+						for (var i = 0; i < nets.length && !zoneName; i++)
+							zoneName = zoneByNetwork[nets[i].getName()];
+					}
+					if (zoneName) map[name] = zoneName;
+					if (zoneName && dev.isBridge()) {
+						(dev.getPorts() || []).forEach(function (port) {
+							var portName = port.getName();
+							if (portName && !(portName in map)) map[portName] = zoneName;
+						});
+					}
+				});
+				return map;
+			});
+		}).catch(function () { return map; });
+	},
+
+	zoneFor: function (ifname, rawZone) {
+		var backendZone = rawZone != null ? String(rawZone).trim() : '';
+		if (backendZone && backendZone.toLowerCase() !== 'unknown')
+			return backendZone;
+		return (this.zoneFallback && this.zoneFallback[ifname]) || '';
 	},
 
 	setThemeClass: function () {
@@ -1332,18 +1389,19 @@ return view.extend({
 				return d;
 			});
 
-			if (!this.selectedIface && this.overview.length) {
-				this.selectedIface = this.overview[0].ifname;
-			}
-			if (this.selectedIface && this.overview.length) {
-				var has = false;
-				for (var i = 0; i < this.overview.length; i++) {
-					if (this.overview[i].ifname === this.selectedIface) {
-						has = true;
-						break;
+			if (this.overview.length) {
+				var overview = this.overview;
+				var hasIface = function (name) {
+					for (var i = 0; i < overview.length; i++) {
+						if (overview[i].ifname === name) return true;
 					}
+					return false;
+				};
+				if (!this.selectedIface || !hasIface(this.selectedIface)) {
+					this.selectedIface = (this.defaultIface && hasIface(this.defaultIface))
+						? this.defaultIface
+						: this.overview[0].ifname;
 				}
-				if (!has) this.selectedIface = this.overview[0].ifname;
 			}
 
 				this.renderIfaceOptions();
@@ -1516,8 +1574,8 @@ return view.extend({
 			var downBps = asNum(metrics.down_v4_bps) + asNum(metrics.down_v6_bps);
 			var cumUp = asNum(cumulative.up_v4_bytes) + asNum(cumulative.up_v6_bytes);
 			var cumDown = asNum(cumulative.down_v4_bytes) + asNum(cumulative.down_v6_bytes);
-			var zoneStr = item.zone != null ? String(item.zone) : '';
 			var ifname = String(item.ifname != null ? item.ifname : '') || '';
+			var zoneStr = this.zoneFor(ifname, item.zone);
 			var ifaceLimit = ifname ? this.findIfaceLimitByIface(ifname) : null;
 			var headBits = [ E('div', { 'class': 'overview-card__title' }, [ ifname || '—' ]) ];
 			var actions = E('div', { 'class': 'overview-card__actions' });
@@ -1605,7 +1663,7 @@ return view.extend({
 			var o = this.overview[i];
 			rows.push({
 				value: o.ifname,
-				label: o.ifname + ' (' + (o.zone || '—') + ')'
+				label: o.ifname + ' (' + (this.zoneFor(o.ifname, o.zone) || '—') + ')'
 			});
 		}
 		if (!hasSameSelectOptions(sel, rows)) {
@@ -1660,7 +1718,7 @@ return view.extend({
 			var o = this.overview[i];
 			rows.push({
 				value: o.ifname,
-				label: o.ifname + ' (' + (o.zone || '—') + ')'
+				label: o.ifname + ' (' + (this.zoneFor(o.ifname, o.zone) || '—') + ')'
 			});
 		}
 		if (!hasSameSelectOptions(sel, rows)) {
@@ -1672,7 +1730,7 @@ return view.extend({
 			}
 		}
 		if (old) sel.value = old;
-		if (!sel.value && this.overview.length) sel.value = this.overview[0].ifname;
+		if (!sel.value && this.overview.length) sel.value = this.selectedIface || this.overview[0].ifname;
 		this.renderUsageRankingIfaceOptions();
 		this.renderStatsMacOptions();
 	},
@@ -1686,7 +1744,7 @@ return view.extend({
 			var o = this.overview[i];
 			rows.push({
 				value: o.ifname,
-				label: o.ifname + ' (' + (o.zone || '—') + ')'
+				label: o.ifname + ' (' + (this.zoneFor(o.ifname, o.zone) || '—') + ')'
 			});
 		}
 		if (!hasSameSelectOptions(sel, rows)) {
@@ -1698,7 +1756,7 @@ return view.extend({
 			}
 		}
 		if (old) sel.value = old;
-		if (!sel.value && this.overview.length) sel.value = this.overview[0].ifname;
+		if (!sel.value && this.overview.length) sel.value = this.selectedIface || this.overview[0].ifname;
 	},
 
 	renderStatsMacOptions: function () {

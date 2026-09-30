@@ -54,6 +54,23 @@ return view.extend({
 		o.nocreate = true;
 		o.rmempty = false;
 
+		o = s.option(form.ListValue, 'default_iface', _('Default interface'), _('Interface selected by default on the Status page. Leave it as Auto to use the first monitored interface.'));
+		o.value('auto', _('Auto (first monitored interface)'));
+		var monitoredIfaces = uci.get('bandix_plus', 'general', 'iface');
+		if (typeof monitoredIfaces === 'string')
+			monitoredIfaces = [ monitoredIfaces ];
+		if (!Array.isArray(monitoredIfaces))
+			monitoredIfaces = [];
+		for (var mi = 0; mi < monitoredIfaces.length; mi++) {
+			if (monitoredIfaces[mi])
+				o.value(monitoredIfaces[mi], monitoredIfaces[mi]);
+		}
+		var currentDefaultIface = uci.get('bandix_plus', 'general', 'default_iface');
+		if (currentDefaultIface && currentDefaultIface !== 'auto' && monitoredIfaces.indexOf(currentDefaultIface) === -1)
+			o.value(currentDefaultIface, currentDefaultIface);
+		o.default = 'auto';
+		o.rmempty = false;
+
 		o = s.option(form.ListValue, 'log_level', _('Log level'));
 		o.value('trace', 'trace');
 		o.value('debug', 'debug');
